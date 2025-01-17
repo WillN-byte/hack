@@ -1,0 +1,192 @@
+from openai import OpenAI
+import tkinter as tk
+from tkinter import ttk, scrolledtext, filedialog, messagebox
+import re
+import subprocess
+import sys
+import os
+
+def clean_code_output(text):
+    # Remove markdown code blocks with language specifiers
+    text = re.sub(r'```\w+\n', '', text)
+    text = re.sub(r'```', '', text)
+    # Remove any leading/trailing whitespace
+    text = text.strip()
+    return text
+
+def check_syntax(source_code, language):
+    if language == "Python":
+        try:
+            compile(source_code, "<string>", "exec")  # Try compiling Python code
+            return True, ""
+        except SyntaxError as e:
+            return False, f"Syntax error in Python code: {e}"
+
+    elif language == "JavaScript":
+        try:
+            # Run JavaScript code through Node.js for syntax check
+            process = subprocess.Popen(
+                ['node', '-c'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate(input=source_code.encode('utf-8'))
+            if process.returncode == 0:
+                return True, ""
+            else:
+                return False, f"Syntax error in JavaScript code: {stderr.decode('utf-8')}"
+        except Exception as e:
+            return False, f"Error checking JavaScript syntax: {str(e)}"
+
+    else:
+        return True, ""  # For other languages, assume no syntax check is available
+
+def get_file_extension(language):
+    extensions = {
+        "Python": ".py",
+        "JavaScript": ".js",
+        "Java": ".java",
+        "C++": ".cpp",
+        "Ruby": ".rb",
+        "Go": ".go",
+        "Rust": ".rs",
+        "PHP": ".php"
+    }
+    return extensions.get(language, ".txt")
+
+def translate_code(source_code, source_lang, target_lang):
+    if not source_code:
+        return "Please enter some code to translate"
+
+    # Syntax check before proceeding
+    is_valid, error_message = check_syntax(source_code, source_lang)
+    if not is_valid:
+        return error_message
+
+    prompt = f"""Convert this {source_lang} code to {target_lang}:
+{source_code}"""
+
+    try:
+        client = OpenAI(
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key="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"
+        )
+
+        completion = client.chat.completions.create(
+            model="nvidia/llama-3.1-nemotron-70b-instruct",
+            messages=[
+                {"role": "system", "content": "You are a code translator. Respond only with the translated code, no explanations or additional text. Do not include language tags or markdown formatting."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.1,
+            max_tokens=2048,
+        )
+        
+        return clean_code_output(completion.choices[0].message.content)
+
+    except Exception as e:
+        return f"Error: {str(e)}"
+
+def translate_from_ui():
+    source_code = source_text.get("1.0", tk.END).strip()
+    source_lang = source_lang_combo.get()
+    target_lang = target_lang_combo.get()
+    
+    result = translate_code(source_code, source_lang, target_lang)
+    result_text.delete("1.0", tk.END)
+    result_text.insert("1.0", result)
+
+def upload_file():
+    file_path = filedialog.askopenfilename(
+        title="Select a file to translate",
+        filetypes=[("All Files", "*.*")]
+    )
+    
+    if file_path:
+        try:
+            with open(file_path, 'r') as file:
+                source_code = file.read()
+                source_text.delete("1.0", tk.END)
+                source_text.insert("1.0", source_code)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error reading file: {str(e)}")
+
+def save_translation():
+    if not result_text.get("1.0", tk.END).strip():
+        messagebox.showwarning("Warning", "No translated code to save!")
+        return
+        
+    target_lang = target_lang_combo.get()
+    file_extension = get_file_extension(target_lang)
+    
+    file_path = filedialog.asksaveasfilename(
+        defaultextension=file_extension,
+        filetypes=[("All Files", "*.*")],
+        title="Save translated code"
+    )
+    
+    if file_path:
+        try:
+            with open(file_path, 'w') as file:
+                file.write(result_text.get("1.0", tk.END))
+            messagebox.showinfo("Success", "File saved successfully!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error saving file: {str(e)}")
+
+# Create main window
+root = tk.Tk()
+root.title("Code Translator")
+root.geometry("1000x800")
+
+# Create and configure grid
+root.grid_columnconfigure(0, weight=1)
+root.grid_columnconfigure(1, weight=1)
+
+languages = ["Python", "JavaScript", "Java", "C++", "Ruby", "Go", "Rust", "PHP"]
+
+# Source language selection
+source_lang_frame = ttk.LabelFrame(root, text="Source Language")
+source_lang_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+source_lang_combo = ttk.Combobox(source_lang_frame, values=languages)
+source_lang_combo.set("Python")
+source_lang_combo.pack(padx=5, pady=5, fill="x")
+
+# Target language selection
+target_lang_frame = ttk.LabelFrame(root, text="Target Language")
+target_lang_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+target_lang_combo = ttk.Combobox(target_lang_frame, values=languages)
+target_lang_combo.set("JavaScript")
+target_lang_combo.pack(padx=5, pady=5, fill="x")
+
+# Source code input
+source_frame = ttk.LabelFrame(root, text="Source Code")
+source_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
+source_text = scrolledtext.ScrolledText(source_frame, wrap=tk.WORD, width=40, height=20)
+source_text.pack(padx=5, pady=5, fill="both", expand=True)
+
+# Result output
+result_frame = ttk.LabelFrame(root, text="Translated Code")
+result_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
+result_text = scrolledtext.ScrolledText(result_frame, wrap=tk.WORD, width=40, height=20)
+result_text.pack(padx=5, pady=5, fill="both", expand=True)
+
+# Button frame
+button_frame = ttk.Frame(root)
+button_frame.grid(row=2, column=0, columnspan=2, pady=10)
+
+# Upload button
+upload_button = ttk.Button(button_frame, text="Upload File", command=upload_file)
+upload_button.pack(side=tk.LEFT, padx=5)
+
+# Translate button
+translate_button = ttk.Button(button_frame, text="Translate", command=translate_from_ui)
+translate_button.pack(side=tk.LEFT, padx=5)
+
+# Save button
+save_button = ttk.Button(button_frame, text="Save Translation", command=save_translation)
+save_button.pack(side=tk.LEFT, padx=5)
+
+# Configure row weights
+root.grid_rowconfigure(1, weight=1)
+
+# Start the application
+if __name__ == "__main__":
+    root.mainloop()
